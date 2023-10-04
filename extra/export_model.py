@@ -3,6 +3,9 @@ from tinygrad.helpers import DType
 from tinygrad.tensor import Device, Tensor
 from tinygrad.jit import TinyJit
 from tinygrad.nn.state import get_state_dict
+from tinygrad.codegen.linearizer import Linearizer
+from tinygrad.runtime.ops_clang import renderer
+from tinygrad.ops import LoadOps
 import json
 
 def compile_net(run:TinyJit, special_names:Dict[int,str]) -> Tuple[Dict[str,str],List[Tuple[str,List[str],List[int]]],Dict[str,Tuple[int,DType,int]],Dict[str,Tensor]]:
@@ -128,6 +131,8 @@ const setupNet = async (device, safetensor) => {{
 def export_model(model, input:Tensor, target:str):
   assert Device.DEFAULT in ["WEBGPU", "CLANG", "CUDA", "GPU", "METAL"], "only WEBGPU, CLANG, CUDA, GPU, METAL are supported"
   run,special_names = jit_model(model, input)
+  #todo: add a cli flag
+  no_jit_model(model)
   functions, statements, bufs, bufs_to_save = compile_net(run, special_names)
   state = get_state_dict(model)
   weight_names = {id(x.lazydata.realized): name for name, x in state.items()}
@@ -164,3 +169,23 @@ def export_model(model, input:Tensor, target:str):
     })
 
   return prg, bufs['input'][0], bufs['outputs'][0], state
+
+def no_jit_model(model):
+  # a single forward pass will create a cgraph
+  result = model.forward(Tensor.randn(1,3,224,224))
+  # chunk the cgraph
+  sched = result.lazydata.schedule()
+
+  while len(sched):
+    op, out, bufs = sched.pop(0)
+
+    # for debugging
+    # print_tree(op)
+
+    if (op.op == LoadOps.RAND):
+      continue
+
+    lin = Linearizer(op)
+    lin.hand_coded_optimizations()
+    lin.linearize()
+    code = renderer(lin.function_name, lin.uops)
