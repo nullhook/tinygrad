@@ -172,7 +172,7 @@ def export_model(model, input:Tensor, target:str):
 
 def no_jit_model(model):
   # a single forward pass will create a cgraph
-  result = model.forward(Tensor.randn(1,3,224,224))
+  result = model.forward(Tensor.randn(1,3,224,224).realize())
   # chunk the cgraph
   sched = result.lazydata.schedule()
 
@@ -181,9 +181,6 @@ def no_jit_model(model):
 
     # for debugging
     # print_tree(op)
-
-    if (op.op == LoadOps.RAND):
-      continue
 
     lin = Linearizer(op)
     lin.hand_coded_optimizations()
